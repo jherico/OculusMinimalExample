@@ -49,7 +49,7 @@ sure you match up the 32/64 bit nature of the project you create with the instal
 
 * "Xcode"
 
-## On Ubuntu using Eclipse (Kepler) 
+## On Ubuntu using Eclipse
 
 Suitable generators
 
