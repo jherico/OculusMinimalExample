@@ -317,10 +317,12 @@ public:
 
   void render(const mat4 & projection, const mat4 & modelview) {
     using namespace oglplus;
-    typedef oglplus::Uniform<mat4> Mat4Uniform;
     prog.Use();
+
+    typedef oglplus::Uniform<mat4> Mat4Uniform;
     Mat4Uniform(prog, ::Uniform::Projection).Set(projection);
     Mat4Uniform(prog, ::Uniform::Modelview).Set(modelview);
+
     cube.Bind();
     Context::DrawArraysInstanced(PrimitiveType::Triangles, 0, primitiveCount, instanceCount);
   }
@@ -708,7 +710,7 @@ public:
   }
 
   bool isEnabled(ovrHmdCaps cap) {
-    return (cap & getEnabledCaps());
+    return (cap == (cap & getEnabledCaps()));
   }
 
   void disableCaps(int caps) {
