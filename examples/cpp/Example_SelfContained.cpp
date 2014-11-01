@@ -178,18 +178,11 @@ namespace Attribute {
   };
 }
 
-namespace Uniform {
-  enum {
-    Projection = 0,
-    Modelview = 1,
-  };
-}
-
 static const char * VERTEX_SHADER =
-"#version 430\n"
+"#version 410\n"
 
-"layout(location = 0) uniform mat4 ProjectionMatrix;"
-"layout(location = 1) uniform mat4 CameraMatrix;"
+"uniform mat4 ProjectionMatrix;"
+"uniform mat4 CameraMatrix;"
 
 "layout(location = 0) in vec4 Position;"
 "layout(location = 2) in vec3 Normal;"
@@ -207,8 +200,7 @@ static const char * VERTEX_SHADER =
 "}";
 
 static const char * FRAGMENT_SHADER =
-"#version 430\n"
-
+"#version 410\n"
 "in vec3 vertNormal;"
 
 "out vec4 fragColor;"
@@ -243,20 +235,24 @@ struct ColorCubeScene {
 public:
   ColorCubeScene() {
     using namespace oglplus;
-    // attach the shaders to the program
-    prog.AttachShader(
-      VertexShader()
-        .Source(GLSLSource(std::string(VERTEX_SHADER)))
-        .Compile()
-    );
-    prog.AttachShader(
-      FragmentShader()
-        .Source(GLSLSource(std::string(FRAGMENT_SHADER)))
-        .Compile()
-    );
+    try {
+      // attach the shaders to the program
+      prog.AttachShader(
+        FragmentShader()
+          .Source(GLSLSource(String(FRAGMENT_SHADER)))
+          .Compile()
+      );
+      prog.AttachShader(
+        VertexShader()
+          .Source(GLSLSource(String(VERTEX_SHADER)))
+          .Compile()
+      );
+      prog.Link();
+    } catch (ProgramBuildError & err) {
+      FAIL((const char*)log);
+    }
 
     // link and use it
-    prog.Link();
     prog.Use();
 
     // bind the VAO for the cube
@@ -320,8 +316,8 @@ public:
     prog.Use();
 
     typedef oglplus::Uniform<mat4> Mat4Uniform;
-    Mat4Uniform(prog, ::Uniform::Projection).Set(projection);
-    Mat4Uniform(prog, ::Uniform::Modelview).Set(modelview);
+    Mat4Uniform(prog, "ProjectionMatrix").Set(projection);
+    Mat4Uniform(prog, "CameraMatrix").Set(modelview);
 
     cube.Bind();
     Context::DrawArraysInstanced(PrimitiveType::Triangles, 0, primitiveCount, instanceCount);
@@ -476,7 +472,7 @@ protected:
   void preCreate() {
     glfwWindowHint(GLFW_DEPTH_BITS, 16);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     // Without this line we get
     // FATAL (86): NSGL: The targeted version of OS X only supports OpenGL 3.2 and later versions if they are forward-compatible
@@ -680,11 +676,12 @@ public:
     if (nullptr == hmd) {
       hmd = ovrHmd_CreateDebug(defaultHmdType);
       hmdDesktopPosition = ivec2(100, 100);
+      hmdNativeResolution = uvec2(1200, 800);
     }
     else {
       hmdDesktopPosition = ivec2(hmd->WindowsPos.x, hmd->WindowsPos.y);
+      hmdNativeResolution = ivec2(hmd->Resolution.w, hmd->Resolution.h);
     }
-    hmdNativeResolution = ivec2(hmd->Resolution.w, hmd->Resolution.h);
   }
 
   virtual ~RiftManagerApp() {
