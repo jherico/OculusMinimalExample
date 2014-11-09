@@ -62,7 +62,22 @@ include_directories(${CMAKE_SOURCE_DIR}/libraries/glew/include)
 include_directories(${CMAKE_SOURCE_DIR}/libraries/glfw/include)
 include_directories(${CMAKE_SOURCE_DIR}/libraries/glm)
 
-# OpenGL encapsulation
+
+# oglplus provides a nice interface for OpenGL encapsulation in C++
+#
+# However, it's CMake setup isn't well suited for inclusion in 
+# another project the way I'm doing.  Most importantly, it does 
+# compiler detection in the CMake setup and then configures a 
+# header file with a bunch of preprocessor macros based on what it 
+# found.  
+#
+# In order to support using it as a header only library, I need to
+# set a bunch of values here, then change the 'PROJECT_SOURCE_DIR' 
+# to the oglplus folder (because it's compiler detection stuff 
+# uses a bunch of files that are considered relative to said dir)
+# and then restore the normal project directory.  
+
+# Set up the configuration constants
 set(OGLPLUS_CONFIG_SET_LOW_PROFILE 1)
 set(OGLPLUS_LOW_PROFILE 0)
 set(OGLPLUS_USE_GLCOREARB_H 0) 
@@ -71,34 +86,46 @@ set(OGLPLUS_USE_GLEW 1)
 set(OGLPLUS_USE_GL3W 0)
 set(OGLPLUS_USE_BOOST_CONFIG 0)
 
+# Save and change the PROJECT_SOURCE_DIR, so the oglplus 
+# compiler and C++ feature detection code will work
 set(SAVE_PROJECT_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 set(PROJECT_SOURCE_DIR ${PROJECT_SOURCE_DIR}/libraries/oglplus)
-#message(FATAL_ERROR ${PROJECT_SOURCE_DIR})
-# compiler options
+# Run compiler and C++ feature detection code
 include(libraries/oglplus/config/Compiler.cmake)
-# c++ compiler options / supported feature detection
 include(libraries/oglplus/config/CPPFeature.cmake)
+# Restore our original project source directory
 set(PROJECT_SOURCE_DIR ${SAVE_PROJECT_SOURCE_DIR})
-
+# Generate the oglplus 'site' header file which switches
+# code paths based on detected C++ features.
 configure_file(
 	${PROJECT_SOURCE_DIR}/libraries/oglplus/config/oglplus/config/site.hpp.in
 	${PROJECT_BINARY_DIR}/libraries/oglplus/include/oglplus/config/site.hpp
 )
 
-#add_subdirectory(libraries/oglplus)
-
-
-include_directories(${CMAKE_SOURCE_DIR}/libraries/OculusSDK/LibOVR/Src)
+# Add the required oglplus include paths
 include_directories(${CMAKE_SOURCE_DIR}/libraries/oglplus/include)
 include_directories(${CMAKE_SOURCE_DIR}/libraries/oglplus/implement)
+# The site config header is in the binary directory, so we need to 
+# add that path too
 include_directories(${CMAKE_BINARY_DIR}/libraries/oglplus/include)
 
 ###############################################################################
 #
 # GLM - Vector / matrix header only math library based on the syntax of GLSL
 #
+# It's cleverly puts all it's compiler and C++ feature  detection code into a
+# header that switches based on what compiler is being used (based on predefined 
+# macros).  Why can't everyone do that?
 include_directories(${CMAKE_SOURCE_DIR}/libraries/glm)
 
+###############################################################################
+#
+# Oculus C API 
+#
+# This provides all the access we need to the Oculus SDK.  For some strange 
+# reason the header files are in LibOVR/Src instead of LibOVR/Include.  
+#
+include_directories(${CMAKE_SOURCE_DIR}/libraries/OculusSDK/LibOVR/Src)
 
 ###############################################################################
 #
