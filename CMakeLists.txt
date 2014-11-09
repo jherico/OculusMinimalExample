@@ -104,7 +104,4 @@ include_directories(${CMAKE_SOURCE_DIR}/libraries/glm)
 #
 # The examples themselves
 #
-foreach(LIB ${EXAMPLE_LIBS}) 
-	message(${LIB})
-endforeach()
 add_subdirectory(examples/cpp)
