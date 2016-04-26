@@ -23,31 +23,7 @@ limitations under the License.
 #include <exception>
 #include <algorithm>
 
-
-//#define DISABLE_RIFT
-
-//////////////////////////////////////////////////////////////////////
-//
-// The OVR types header contains the OS detection macros:
-//  OVR_OS_WIN32, OVR_OS_MAC, OVR_OS_LINUX (and others)
-//
-
-#define OS_WIN
-
-#if defined(OS_WIN)
-#define ON_WINDOWS(runnable) runnable()
-#define ON_MAC(runnable)
-#define ON_LINUX(runnable)
 #include <Windows.h>
-#elif defined(OS_OSX)
-#define ON_WINDOWS(runnable) 
-#define ON_MAC(runnable) runnable()
-#define ON_LINUX(runnable)
-#elif defined(OS_LINUX)
-#define ON_WINDOWS(runnable) 
-#define ON_MAC(runnable) 
-#define ON_LINUX(runnable) runnable()
-#endif
 
 #define __STDC_FORMAT_MACROS 1
 
@@ -160,6 +136,10 @@ bool checkGlError() {
     }
 }
 
+void glDebugCallbackHandler(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *msg, GLvoid* data) {
+    OutputDebugStringA(msg);
+    std::cout << "debug call: " << msg << std::endl;
+}
 
 //////////////////////////////////////////////////////////////////////
 //
@@ -169,17 +149,6 @@ bool checkGlError() {
 #include <GLFW/glfw3.h>
 
 namespace glfw {
-    inline uvec2 getSize(GLFWmonitor * monitor) {
-        const GLFWvidmode * mode = glfwGetVideoMode(monitor);
-        return uvec2(mode->width, mode->height);
-    }
-
-    inline ivec2 getPosition(GLFWmonitor * monitor) {
-        ivec2 result;
-        glfwGetMonitorPos(monitor, &result.x, &result.y);
-        return result;
-    }
-
     inline GLFWwindow * createWindow(const uvec2 & size, const ivec2 & position = ivec2(INT_MIN)) {
         GLFWwindow * window = glfwCreateWindow(size.x, size.y, "glfw", nullptr, nullptr);
         if (!window) {
@@ -190,11 +159,6 @@ namespace glfw {
         }
         return window;
     }
-}
-
-void glDebugCallbackHandler(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *msg, GLvoid* data) {
-    OutputDebugStringA(msg);
-    std::cout << "debug call: " << msg << std::endl;
 }
 
 // A class to encapsulate using GLFW to handle input and render a scene
@@ -269,7 +233,6 @@ protected:
         glfwSetKeyCallback(window, KeyCallback);
         glfwSetMouseButtonCallback(window, MouseButtonCallback);
         glfwMakeContextCurrent(window);
-        glfwSwapInterval(0);
 
         // Initialize the OpenGL bindings
         // For some reason we have to set this experminetal flag to properly
@@ -293,7 +256,6 @@ protected:
     }
 
     virtual void shutdownGl() {
-
     }
 
     virtual void finishFrame() {
@@ -344,12 +306,9 @@ private:
     }
 };
 
-
-
 //////////////////////////////////////////////////////////////////////
 //
 // The Oculus VR C API provides access to information about the HMD
-// and SDK based distortion.
 //
 
 #include <OVR_CAPI.h>
@@ -451,7 +410,7 @@ public:
         _hmdDesc = ovr_GetHmdDesc(_session);
     }
 
-    virtual ~RiftManagerApp() {
+    ~RiftManagerApp() {
         ovr_Destroy(_session);
         _session = nullptr;
     }
@@ -461,24 +420,22 @@ class RiftApp : public GlfwApp, public RiftManagerApp {
 public:
 
 private:
-#ifndef DISABLE_RIFT
-    ovrTextureSwapChain _eyeTexture;
-    ovrMirrorTexture _mirrorTexture;
     GLuint _fbo { 0 };
-    GLuint _mirrorFbo { 0 };
     GLuint _depthBuffer { 0 };
-#endif
-    ovrEyeType _currentEye { ovrEye_Count };
+    ovrTextureSwapChain _eyeTexture;
+
+    GLuint _mirrorFbo { 0 };
+    ovrMirrorTexture _mirrorTexture;
+
     ovrEyeRenderDesc _eyeRenderDescs[2];
+
     mat4 _eyeProjections[2];
-    ovrVector3f _eyeOffsets[2];
-    ovrPosef _eyePoses[2];
-    ovrFovPort _eyeFovs[2];
+
     ovrLayerEyeFov _sceneLayer;
     ovrViewScaleDesc _viewScaleDesc;
+
     uvec2 _renderTargetSize;
     uvec2 _mirrorSize;
-    
 
 public:
 
@@ -491,37 +448,36 @@ public:
         _sceneLayer.Header.Flags = ovrLayerFlag_TextureOriginAtBottomLeft;
 
         ovr::for_each_eye([&](ovrEyeType eye) {
-            _eyeFovs[eye] = _hmdDesc.DefaultEyeFov[eye];
-            ovrEyeRenderDesc& erd = _eyeRenderDescs[eye] = ovr_GetRenderDesc(_session, eye, _eyeFovs[eye]);
+            ovrEyeRenderDesc& erd = _eyeRenderDescs[eye] = ovr_GetRenderDesc(_session, eye, _hmdDesc.DefaultEyeFov[eye]);
             ovrMatrix4f ovrPerspectiveProjection =
                 ovrMatrix4f_Projection(erd.Fov, 0.01f, 1000.0f, ovrProjection_ClipRangeOpenGL);
             _eyeProjections[eye] = ovr::toGlm(ovrPerspectiveProjection);
-            _eyeOffsets[eye] = erd.HmdToEyeOffset;
-
-            auto eyeSize = ovr_GetFovTextureSize(_session, eye, erd.Fov, 1.0f);
             _viewScaleDesc.HmdToEyeOffset[eye] = erd.HmdToEyeOffset;
+
             ovrFovPort & fov = _sceneLayer.Fov[eye] = _eyeRenderDescs[eye].Fov;
+            auto eyeSize = ovr_GetFovTextureSize(_session, eye, fov, 1.0f);
             _sceneLayer.Viewport[eye].Size = eyeSize;
-            _sceneLayer.Viewport[eye].Pos = { eye == ovrEye_Left ? 0 : eyeSize.w, 0 };
+            _sceneLayer.Viewport[eye].Pos = { _renderTargetSize.x, 0 };
+
             _renderTargetSize.y = std::max(_renderTargetSize.y, (uint32_t)eyeSize.h);
             _renderTargetSize.x += eyeSize.w;
         });
+        // Make the on screen window 1/4 the resolution of the render target
         _mirrorSize = _renderTargetSize;
         _mirrorSize /= 4;
     }
 
-    virtual ~RiftApp() {
-    }
-
 protected:
-    virtual GLFWwindow * createRenderingTarget(uvec2 & outSize, ivec2 & outPosition) {
+    GLFWwindow * createRenderingTarget(uvec2 & outSize, ivec2 & outPosition) override {
         return glfw::createWindow(_mirrorSize);
     }
 
-    virtual void initGl() {
+    void initGl() override {
         GlfwApp::initGl();
 
-#ifndef DISABLE_RIFT
+        // Disable the v-sync for buffer swap
+        glfwSwapInterval(0);
+
         ovrTextureSwapChainDesc desc = {};
         desc.Type = ovrTexture_2D;
         desc.ArraySize = 1;
@@ -572,15 +528,9 @@ protected:
             FAIL("Could not create mirror texture");
         }
         glGenFramebuffers(1, &_mirrorFbo);
-#endif
     }
 
-    // Override the base class to prevent the swap buffer call, because OVR does it in end frame
-    virtual void finishFrame() {
-        
-    }
-
-    virtual void onKey(int key, int scancode, int action, int mods) {
+    void onKey(int key, int scancode, int action, int mods) override {
         if (GLFW_PRESS == action) switch (key) {
         case GLFW_KEY_R:
             ovr_RecenterTrackingOrigin(_session);
@@ -590,11 +540,10 @@ protected:
         GlfwApp::onKey(key, scancode, action, mods);
     }
 
-    virtual void draw() final {
+    void draw() final override {
         ovrPosef eyePoses[2];
-        ovr_GetEyePoses(_session, frame, true, _eyeOffsets, eyePoses, &_sceneLayer.SensorSampleTime);
+        ovr_GetEyePoses(_session, frame, true, _viewScaleDesc.HmdToEyeOffset, eyePoses, &_sceneLayer.SensorSampleTime);
 
-#ifndef DISABLE_RIFT
         int curIndex;
         ovr_GetTextureSwapChainCurrentIndex(_session, _eyeTexture, &curIndex);
         GLuint curTexId;
@@ -617,20 +566,9 @@ protected:
         GLuint mirrorTextureId;
         ovr_GetMirrorTextureBufferGL(_session, _mirrorTexture, &mirrorTextureId);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, _mirrorFbo);
-        checkGlError();
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mirrorTextureId, 0);
-        checkGlError();
         glBlitFramebuffer(0, 0, _mirrorSize.x, _mirrorSize.y, 0, _mirrorSize.y, _mirrorSize.x, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        checkGlError();
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-        checkGlError();
-        glfwSwapBuffers(window);
-
-#else
-        glViewport(0, 0, _mirrorSize.x, _mirrorSize.y);
-        renderScene(_eyeProjections[0], ovr::toGlm(eyePoses[0]));
-        glfwSwapBuffers(window);
-#endif
     }
 
     virtual void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) = 0;
@@ -805,7 +743,7 @@ public:
     ExampleApp() { }
 
 protected:
-    virtual void initGl() {
+    void initGl() override {
         RiftApp::initGl();
         glClearColor(0.2f, 0.2f, 0.2f, 0.0f);
         glEnable(GL_DEPTH_TEST);
@@ -813,11 +751,11 @@ protected:
         cubeScene = std::shared_ptr<ColorCubeScene>(new ColorCubeScene());
     }
 
-    virtual void shutdownGl() {
+    void shutdownGl() override {
         cubeScene.reset();
     }
 
-    void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) {
+    void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) override {
         cubeScene->render(projection, glm::inverse(headPose));
     }
 };
@@ -831,6 +769,7 @@ int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
         }
         result = ExampleApp().run();
     } catch (std::exception & error) {
+        OutputDebugStringA(error.what());
         std::cerr << error.what() << std::endl;
     }
     ovr_Shutdown();
