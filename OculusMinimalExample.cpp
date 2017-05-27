@@ -36,12 +36,14 @@ limitations under the License.
 
 #include <glm/glm.hpp>
 #include <glm/gtc/noise.hpp>
+#include <glm/gtx/euler_angles.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 // Import the most commonly used types into the default namespace
 using glm::ivec3;
@@ -138,6 +140,7 @@ bool checkGlError() {
 
 void glDebugCallbackHandler(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *msg, GLvoid* data) {
     OutputDebugStringA(msg);
+    OutputDebugStringA("\n");
     std::cout << "debug call: " << msg << std::endl;
 }
 
@@ -450,7 +453,7 @@ public:
         ovr::for_each_eye([&](ovrEyeType eye) {
             ovrEyeRenderDesc& erd = _eyeRenderDescs[eye] = ovr_GetRenderDesc(_session, eye, _hmdDesc.DefaultEyeFov[eye]);
             ovrMatrix4f ovrPerspectiveProjection =
-                ovrMatrix4f_Projection(erd.Fov, 0.01f, 1000.0f, ovrProjection_ClipRangeOpenGL);
+                ovrMatrix4f_Projection(erd.Fov, 0.1f, 100.0f, ovrProjection_ClipRangeOpenGL);
             _eyeProjections[eye] = ovr::toGlm(ovrPerspectiveProjection);
             _viewScaleDesc.HmdToEyeOffset[eye] = erd.HmdToEyeOffset;
 
@@ -555,7 +558,7 @@ protected:
             const auto& vp = _sceneLayer.Viewport[eye];
             glViewport(vp.Pos.x, vp.Pos.y, vp.Size.w, vp.Size.h);
             _sceneLayer.RenderPose[eye] = eyePoses[eye];
-            renderScene(_eyeProjections[eye], ovr::toGlm(eyePoses[eye]));
+            renderScene(eye, _eyeProjections[eye], ovr::toGlm(eyePoses[eye]));
         });
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -571,7 +574,7 @@ protected:
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     }
 
-    virtual void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) = 0;
+    virtual void renderScene(ovrEyeType eye, const glm::mat4 & projection, const glm::mat4 & headPose) = 0;
 };
 
 //////////////////////////////////////////////////////////////////////
@@ -603,6 +606,9 @@ protected:
 #include <oglplus/bound/renderbuffer.hpp>
 #include <oglplus/bound/buffer.hpp>
 #include <oglplus/shapes/cube.hpp>
+#include <oglplus/shapes/grid.hpp>
+#include <oglplus/shapes/plane.hpp>
+#include <oglplus/shapes/icosahedron.hpp>
 #include <oglplus/shapes/wrapper.hpp>
 #pragma warning( default : 4068 4244 4267 4065)
 
@@ -619,7 +625,91 @@ namespace Attribute {
     };
 }
 
-static const char * VERTEX_SHADER = R"SHADER(
+
+struct CalibrationScene {
+    oglplus::shapes::ShapeWrapper line;
+    oglplus::Program prog;
+    oglplus::VertexArray vao;
+
+    CalibrationScene() : line("Position", oglplus::shapes::Grid({ 0, 0, -100 }, { 100.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.01f }, 1, 1)) {
+        static const char * VERTEX_SHADER = R"SHADER(
+#version 410 core
+
+uniform mat4 ProjectionMatrix = mat4(1);
+uniform mat4 CameraMatrix = mat4(1);
+
+layout(location = 0) in vec4 Position;
+
+out vec3 vertexPosition;
+
+void main(void) {
+    vertexPosition = Position.xyz / Position.w;
+    gl_Position = ProjectionMatrix * CameraMatrix * Position;
+}
+)SHADER";
+
+        static const char * FRAGMENT_SHADER = R"SHADER(
+#version 410 core
+
+in vec3 vertexPosition;
+out vec4 fragColor;
+
+void main(void) {
+    fragColor = vec4(1.0);
+}
+)SHADER";
+
+        using namespace oglplus;
+        try {
+            // attach the shaders to the program
+            prog.AttachShader(
+                FragmentShader()
+                .Source(GLSLSource(String(FRAGMENT_SHADER)))
+                .Compile()
+                );
+            prog.AttachShader(
+                VertexShader()
+                .Source(GLSLSource(String(VERTEX_SHADER)))
+                .Compile()
+                );
+            prog.Link();
+        } catch (ProgramBuildError & err) {
+            FAIL((const char*)err.what());
+        }
+
+        // link and use it
+        prog.Use();
+        vao = line.VAOForProgram(prog);
+    }
+
+    void render(const mat4 & projection, const mat4 & modelview) {
+        using namespace oglplus;
+        prog.Use();
+        Uniform<mat4>(prog, "ProjectionMatrix").Set(projection);
+        Uniform<mat4>(prog, "CameraMatrix").Set(modelview);
+        vao.Bind();
+        line.Draw();
+    }
+};
+
+// a class for encapsulating building and rendering an RGB cube
+struct ColorCubeScene {
+
+    // Program
+    oglplus::shapes::ShapeWrapper cube;
+    oglplus::Program prog;
+    oglplus::VertexArray vao;
+    GLuint instanceCount;
+    oglplus::Buffer instances;
+
+    // VBOs for the cube's vertices and normals
+
+    const unsigned int GRID_SIZE { 5 };
+    const float GRID_SCALE { 0.2f };
+
+public:
+    ColorCubeScene() : cube({ "Position", "Normal" }, oglplus::shapes::Cube()) {
+        static const char * VERTEX_SHADER = R"SHADER(
 #version 410 core
 
 uniform mat4 ProjectionMatrix = mat4(1);
@@ -639,7 +729,7 @@ void main(void) {
 }
 )SHADER";
 
-static const char * FRAGMENT_SHADER = R"SHADER(
+        static const char * FRAGMENT_SHADER = R"SHADER(
 #version 410 core
 
 in vec3 vertNormal;
@@ -654,22 +744,6 @@ void main(void) {
 }
 )SHADER";
 
-// a class for encapsulating building and rendering an RGB cube
-struct ColorCubeScene {
-
-    // Program
-    oglplus::shapes::ShapeWrapper cube;
-    oglplus::Program prog;
-    oglplus::VertexArray vao;
-    GLuint instanceCount;
-    oglplus::Buffer instances;
-
-    // VBOs for the cube's vertices and normals
-
-    const unsigned int GRID_SIZE { 5 };
-
-public:
-    ColorCubeScene() : cube({ "Position", "Normal" }, oglplus::shapes::Cube()) {
         using namespace oglplus;
         try {
             // attach the shaders to the program
@@ -702,11 +776,11 @@ public:
                         int xpos = (x - (GRID_SIZE / 2)) * 2;
                         int ypos = (y - (GRID_SIZE / 2)) * 2;
                         int zpos = (z - (GRID_SIZE / 2)) * 2;
-                        vec3 relativePosition = vec3(xpos, ypos, zpos);
+                        vec3 relativePosition = vec3(xpos, ypos, zpos) * 0.2f;
                         if (relativePosition == vec3(0)) {
                             continue;
                         }
-                        instance_positions.push_back(glm::translate(glm::mat4(1.0f), relativePosition));
+                        instance_positions.push_back(glm::scale(glm::translate(glm::mat4(1.0f), relativePosition), vec3(0.2f)));
                     }
                 }
             }
@@ -734,10 +808,22 @@ public:
     }
 };
 
+enum Step {
+    PITCH,
+    YAW,
+    DONE,
+};
+
 
 // An example application that renders a simple cube
 class ExampleApp : public RiftApp {
+    using Parent = RiftApp;
     std::shared_ptr<ColorCubeScene> cubeScene;
+    std::shared_ptr<CalibrationScene> calibrationScene;
+
+    const float INPUT_SCALE = 4.0f;
+    Step step { PITCH };
+    vec3 correctEuler { -0.00176447013f, -0.091446057f, 0.0f };
 
 public:
     ExampleApp() { }
@@ -745,18 +831,82 @@ public:
 protected:
     void initGl() override {
         RiftApp::initGl();
-        glClearColor(0.2f, 0.2f, 0.2f, 0.0f);
+        glClearColor(0.1f, 0.1f, 0.1f, 0.0f);
         glEnable(GL_DEPTH_TEST);
         ovr_RecenterTrackingOrigin(_session);
-        cubeScene = std::shared_ptr<ColorCubeScene>(new ColorCubeScene());
+        calibrationScene = std::make_shared<CalibrationScene>();
+        cubeScene = std::make_shared<ColorCubeScene>();
+    }
+
+    void onKey(int key, int scancode, int action, int mods) override {
+        //MatrixStack & mv = Stacks::modelview();
+        ovrTrackingState tracking;
+
+        if (GLFW_PRESS == action) switch (key) {
+            case GLFW_KEY_SPACE:
+                switch (step) {
+                    case PITCH:
+                        tracking = ovr_GetTrackingState(_session, 0, false);
+                        correctEuler.x = glm::eulerAngles(ovr::toGlm(tracking.HeadPose.ThePose.Orientation)).x / INPUT_SCALE;
+                        std::cout << correctEuler.x << std::endl;
+                        step = YAW;
+                        break;
+
+                    case YAW:
+                        tracking = ovr_GetTrackingState(_session, 0, false);
+                        correctEuler.y = glm::eulerAngles(ovr::toGlm(tracking.HeadPose.ThePose.Orientation)).y / INPUT_SCALE;
+                        std::cout << correctEuler.y << std::endl;
+                        step = DONE;
+                        break;
+
+                    default:
+                        break;
+                }
+                return;
+        }
+        Parent::onKey(key, scancode, action, mods);
     }
 
     void shutdownGl() override {
         cubeScene.reset();
     }
 
-    void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) override {
-        cubeScene->render(projection, glm::inverse(headPose));
+    void renderScene(ovrEyeType eye, const glm::mat4 & projection, const glm::mat4 & headPose) override {
+        if (step == DONE) {
+            glm::mat4 strabismusCorrection;
+            if (eye == ovrEye_Right) {
+                strabismusCorrection = glm::eulerAngleY(correctEuler.y) * glm::eulerAngleX(correctEuler.x);
+            }
+            cubeScene->render(projection, glm::inverse(strabismusCorrection) * glm::inverse(headPose));
+            return;
+        }
+
+        auto eulerAngles = glm::eulerAngles(glm::quat_cast(headPose));
+        glm::quat rotation;
+        if (eye == ovrEye_Right) {
+            eulerAngles *= -1.0f;
+        }
+
+        static const mat4 ROTATE_X_UP = glm::mat4_cast(glm::angleAxis((float)M_PI / 2.0f, vec3(0, 0, 1)));
+        static const mat4 TRANSLATE_UP = glm::translate(vec3 { 0, 100, 0 });
+        static const mat4 TRANSLATE_DOWN = glm::translate(vec3 { 0, -100, 0 });
+         
+        switch (step) {
+            default:
+            case PITCH:
+                rotation = glm::angleAxis(eulerAngles.x / INPUT_SCALE, vec3(1, 0, 0));
+                calibrationScene->render(projection, glm::mat4_cast(rotation));
+                break;
+
+            case YAW:
+                rotation = glm::angleAxis(eulerAngles.y / INPUT_SCALE, vec3(0, 1, 0));
+                if (eye == ovrEye_Right) {
+                    calibrationScene->render(projection, glm::mat4_cast(rotation) * TRANSLATE_UP * ROTATE_X_UP);
+                } else {
+                    calibrationScene->render(projection, glm::mat4_cast(rotation) * TRANSLATE_DOWN * ROTATE_X_UP);
+                }
+                break;
+        }
     }
 };
 
